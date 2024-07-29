@@ -76,6 +76,8 @@ class inverseISP(nn.Module):
         return x
 
     def rgb2raw(self, x, condition):
+        self.run_metadata = dict()
+
         b = x.shape[0]
         gs = self.global_size
         ccm_condition = torch.ones([b, self.ccm.shape[0], 1, gs, gs], device=x.device)
@@ -103,7 +105,13 @@ class inverseISP(nn.Module):
         ccm_prob = self.ccm_estimator(ccm_preview).view([b, -1])
         ccm_prob = torch.softmax(ccm_prob, 1)
         ccm = ccm[None] * ccm_prob.view([b, -1, 1, 1]) # [B, N, 3, 3]
+
+        if not self.training:
+            # save just before merging
+            self.run_metadata["ccm"] = ccm.cpu().numpy().tolist()
+
         ccm = ccm.sum(1)  # [B, 3, 3]
+
         inv_ccm = torch.linalg.pinv(ccm.transpose(-2, -1))  # [B, 3, 3]
         x = torch.einsum('bchw,bcj->bjhw', [x, inv_ccm])  # [B, 3, H, W]
 
@@ -129,6 +137,10 @@ class inverseISP(nn.Module):
         wb_prob = torch.softmax(wb_prob, 1)
         gain = gain.view([b, -1, 3, 1, 1]) * wb_prob  # [B, N, 3, 1, 1]
         gain = gain.sum(1)  # [B, 3, 1, 1]
+
+        if not self.training:
+            self.run_metadata["gain"] = gain.cpu().numpy().tolist()
+
         x = self.safe_inverse_gain(x, gain)  # [B, 3, H, W]
 
         # mosaic
